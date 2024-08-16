@@ -31,3 +31,23 @@ body {
     text-wrap: balance;
   }
 }
+
+.sidebar {
+  position: absolute;
+  width: 70px;
+  height: 832px;
+  left: 0px;
+  top: 0px;
+  background: #FFFFFF;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-around;
+}
+
+.icon {
+  margin: 20px 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
