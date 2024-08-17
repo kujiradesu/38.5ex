@@ -1,3 +1,4 @@
+import numpy as np
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -11,10 +12,13 @@ from datetime import datetime, timedelta
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from dotenv import load_dotenv
 from passlib.context import CryptContext
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.manifold import TSNE
 import os
 import bcrypt
 
-load_dotenv()  # .envファイルを読み込む
+load_dotenv()
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM")
@@ -25,28 +29,30 @@ app = FastAPI()
 # CORS 設定
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # 3000ポートからのリクエストを許可
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
-    allow_methods=["*"],  # すべてのHTTPメソッドを許可
-    allow_headers=["*"],  # すべてのヘッダーを許可
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# モデルの作成
 Base.metadata.create_all(bind=engine)
-
-# ルーターを追加
 app.include_router(router)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-# パスワードハッシュ化のためのコンテキストを作成
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# パスワードをハッシュ化するヘルパー関数
 def get_password_hash(password):
     return pwd_context.hash(password)
 
-# JWTトークンの生成
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+def vectorize_post(title: str, description: str) -> np.ndarray:
+    title_embedding = model.encode(title)
+    description_embedding = model.encode(description)
+    combined_embedding = (title_embedding + description_embedding) / 2
+    return combined_embedding
+
 def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -54,7 +60,6 @@ def create_access_token(data: dict):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-# DBセッションの取得
 def get_db():
     db = SessionLocal()
     try:
@@ -62,18 +67,15 @@ def get_db():
     finally:
         db.close()
 
-# ユーザー作成用のPydanticモデル
 class UserCreate(BaseModel):
     username: str
     email: str
     password: str
 
-# ユーザー更新用のPydanticモデル
 class UserUpdate(BaseModel):
     username: Optional[str] = None
     email: Optional[str] = None
 
-# Create (新規ユーザーを作成)
 @app.post("/users/")
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
     hashed_password = get_password_hash(user.password)
@@ -83,13 +85,11 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
     db.refresh(db_user)
     return db_user
 
-# Read (全てのユーザーを取得)
 @app.get("/users/", response_model=List[str])
 def read_users(db: Session = Depends(get_db)):
     users = db.query(User).all()
     return [user.username for user in users]
 
-# Update (既存のユーザーを更新)
 @app.put("/users/{user_id}")
 def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
@@ -105,7 +105,6 @@ def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get
     db.refresh(user)
     return user
 
-# Delete (ユーザーを削除)
 @app.delete("/users/{user_id}")
 def delete_user(user_id: int, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
@@ -113,10 +112,7 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
     
     try:
-        # 関連するPostsを削除
         db.query(Posts).filter(Posts.user_id == user_id).delete()
-        
-        # ユーザーを削除
         db.delete(user)
         db.commit()
     except Exception as e:
@@ -125,12 +121,10 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
 
     return {"message": "User and related posts deleted"}
 
-# ログイン用のリクエストボディモデル
 class LoginRequest(BaseModel):
     username: str
     password: str
 
-# ログインエンドポイントの作成
 @app.post("/login")
 def login(request: LoginRequest, db: Session = Depends(get_db)):
     print(f"Login attempt with username: {request.username}")
@@ -143,8 +137,6 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
         print("Invalid username or password")
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
-
-# 新規投稿を作成するためのPydanticモデル
 class PostCreate(BaseModel):
     activity_type: str
     status: str
@@ -152,7 +144,6 @@ class PostCreate(BaseModel):
     title: str
     description: str
 
-# ユーザーを取得するヘルパー関数
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=401,
@@ -172,11 +163,42 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
     return user
 
-# 投稿作成エンドポイント
 @app.post("/posts/")
 def create_post(post: PostCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    db_post = Posts(user_id=current_user.id, **post.dict())
+    embedding = vectorize_post(post.title, post.description)
+    db_post = Posts(
+        user_id=current_user.id,
+        activity_type=post.activity_type,
+        status=post.status,
+        comment=post.comment,
+        title=post.title,
+        description=post.description,
+        embedding=embedding.tobytes()  # ベクトルをバイナリとして保存
+    )
     db.add(db_post)
     db.commit()
     db.refresh(db_post)
     return db_post
+
+@app.get("/map/")
+def get_map_data(db: Session = Depends(get_db)):
+    posts = db.query(Posts).all()
+    embeddings = np.array([np.frombuffer(post.embedding) for post in posts])
+    
+    tsne = TSNE(n_components=2)
+    reduced_embeddings = tsne.fit_transform(embeddings)
+    
+    map_data = [{"id": post.id, "x": float(coord[0]), "y": float(coord[1])} for post, coord in zip(posts, reduced_embeddings)]
+    
+    return map_data
+
+@app.post("/search/")
+def search_posts(query: str, db: Session = Depends(get_db)):
+    query_embedding = model.encode(query)
+    posts = db.query(Posts).all()
+    embeddings = np.array([np.frombuffer(post.embedding) for post in posts])
+    
+    similarities = cosine_similarity([query_embedding], embeddings)[0]
+    similar_posts = [post for post, similarity in zip(posts, similarities) if similarity > 0.5]
+    
+    return similar_posts
