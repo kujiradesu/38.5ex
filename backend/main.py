@@ -17,6 +17,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.manifold import TSNE
 import os
 import bcrypt
+import base64
 
 load_dotenv()
 
@@ -129,13 +130,19 @@ class LoginRequest(BaseModel):
 def login(request: LoginRequest, db: Session = Depends(get_db)):
     print(f"Login attempt with username: {request.username}")
     user = db.query(User).filter(User.username == request.username).first()
-    if user and bcrypt.checkpw(request.password.encode('utf-8'), user.hashed_password.encode('utf-8')):
+    
+    if user is None:
+        print("Invalid username or password")
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    
+    if bcrypt.checkpw(request.password.encode('utf-8'), user.hashed_password.encode('utf-8')):
         access_token = create_access_token(data={"sub": str(user.id)})
         print(f"Token generated: {access_token}")
         return {"access_token": access_token, "token_type": "bearer"}
     else:
         print("Invalid username or password")
         raise HTTPException(status_code=401, detail="Invalid username or password")
+
 
 class PostCreate(BaseModel):
     activity_type: str
@@ -163,22 +170,39 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
     return user
 
+# 投稿作成エンドポイント
 @app.post("/posts/")
 def create_post(post: PostCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # タイトルと詳細説明をベクトル化
     embedding = vectorize_post(post.title, post.description)
+    
+    # 投稿のデータを作成
     db_post = Posts(
-        user_id=current_user.id,
-        activity_type=post.activity_type,
-        status=post.status,
-        comment=post.comment,
-        title=post.title,
+        user_id=current_user.id, 
+        activity_type=post.activity_type, 
+        status=post.status, 
+        comment=post.comment, 
+        title=post.title, 
         description=post.description,
-        embedding=embedding.tobytes()  # ベクトルをバイナリとして保存
+        embedding=embedding.tobytes()  # ベクトルをバイナリデータとして保存
     )
+    
     db.add(db_post)
     db.commit()
     db.refresh(db_post)
-    return db_post
+    
+    # embedding を Base64 エンコードしてレスポンスに含める
+    response_data = {
+        "id": db_post.id,
+        "activity_type": db_post.activity_type,
+        "status": db_post.status,
+        "comment": db_post.comment,
+        "title": db_post.title,
+        "description": db_post.description,
+        "embedding": base64.b64encode(db_post.embedding).decode('utf-8')
+    }
+    
+    return response_data
 
 @app.get("/map/")
 def get_map_data(db: Session = Depends(get_db)):

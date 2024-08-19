@@ -44,6 +44,12 @@ const HomePage = () => {
       return;
     }
 
+    // フィールドのバリデーション
+    if (!title.trim() || !description.trim() || !jobClass || !status || !comment) {
+      alert("すべてのフィールドを入力してください。");
+      return;
+    }
+
     const data = {
       activity_type: jobClass,
       status: status,
@@ -59,6 +65,7 @@ const HomePage = () => {
         },
       });
       console.log("投稿成功:", response.data);
+      alert("投稿が完了しました！");
       // フォームのリセット
       setJobClass("業務");
       setStatus("やってみたい");
@@ -77,6 +84,7 @@ const HomePage = () => {
       }
     }
   };
+
 
   return (
     <Container>
