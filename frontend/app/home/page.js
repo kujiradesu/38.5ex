@@ -174,8 +174,9 @@ const HomePage = () => {
         ctx.fillStyle = getStatusColor(point.status);
         ctx.fill();
       });
+    }
+  };
       
-  
   
   useEffect(() => {
     plotMapData(mapData);  // データを描画
