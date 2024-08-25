@@ -28,7 +28,7 @@ class Posts(Base):
     description = Column(Text, nullable=True)
     embedding = Column(LargeBinary, nullable=True)
 
-    x_coord = Column(Double, nullable=True)  # 変更例
-    y_coord = Column(Double, nullable=True)  # 変更例
+    x_coord = Column(Double, nullable=True)
+    y_coord = Column(Double, nullable=True)
 
     user = relationship("User", back_populates="posts")

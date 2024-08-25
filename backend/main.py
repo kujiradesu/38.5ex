@@ -9,7 +9,7 @@ import numpy as np
 import base64
 import bcrypt
 import umap
-import pinecone 
+import pinecone
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -21,6 +21,8 @@ from sklearn.metrics.pairwise import cosine_similarity
 from dotenv import load_dotenv
 from typing import List, Optional
 from pinecone import Pinecone, ServerlessSpec  # 修正ポイント：Pineconeのインポート
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 
 from backend.database import engine, Base, SessionLocal
 from backend.models import User, Posts
@@ -44,7 +46,7 @@ index_name = "my-index"
 if index_name not in pc.list_indexes().names():
     pc.create_index(
         name=index_name,
-        dimension=768,  # 1536次元に設定
+        dimension=768,  # 1536次元でもOK
         metric='cosine',
         spec=ServerlessSpec(
             cloud='aws',
@@ -112,10 +114,12 @@ def vectorize_post(title: str, description: str) -> np.ndarray:
 
 
 def get_2d_embeddings(embeddings):
-    umap_model = umap.UMAP(n_neighbors=15, min_dist=0.1, metric='cosine')
+    # UMAPのパラメータを調整してみる
+    umap_model = umap.UMAP(n_neighbors=5, min_dist=0.01, metric='cosine')
     reduced_embeddings = umap_model.fit_transform(embeddings)
     print(f"Reduced Embeddings: {reduced_embeddings}")  # デバッグのために出力
     return reduced_embeddings
+
 
 
 
@@ -137,6 +141,17 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     if user is None:
         raise credentials_exception
     return user
+
+# 埋め込みデータを標準化
+def standardize_embeddings(embeddings):
+    scaler = StandardScaler()
+    standardized_embeddings = scaler.fit_transform(embeddings)
+    return standardized_embeddings
+
+def preprocess_embeddings(embeddings, n_components=100):
+    pca = PCA(n_components=n_components)
+    reduced_embeddings = pca.fit_transform(embeddings)
+    return reduced_embeddings
 
 # Models
 class UserCreate(BaseModel):
@@ -211,7 +226,7 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
     access_token = create_access_token(data={"sub": str(user.id)})
     return {"access_token": access_token, "token_type": "bearer"}
 
-@app.post("/posts/")
+@app.post("/home/")
 def create_post(post: PostCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # タイトルと説明からベクトルを作成します
     embedding = vectorize_post(post.title, post.description)
@@ -231,17 +246,21 @@ def create_post(post: PostCreate, db: Session = Depends(get_db), current_user: U
     db.commit()
     db.refresh(db_post)
 
-    # Pineconeにベクトルをアップサートします
-    pinecone_key = f"{current_user.id}#{db_post.id}"  # ユニークキーを作成
-    index.upsert(vectors=[(pinecone_key, embedding.tolist())])  # Pineconeにアップサート
+    # UMAPで次元削減を行う
+    reduced_embeddings = get_2d_embeddings([embedding])
+    print(f"Reduced 2D Embeddings: {reduced_embeddings}")  # ここで次元削減結果を出力
 
-    # x_coordとy_coordもデータベースに保存する場合
-    reduced_embedding = get_2d_embeddings([embedding])[0]
-    db_post.x_coord = reduced_embedding[0]
-    db_post.y_coord = reduced_embedding[1]
-    print(f"x_coord: {db_post.x_coord}, y_coord: {db_post.y_coord}")  # コミット前に確認
-    db.commit()
+    if reduced_embeddings.shape[1] == 2:  # 次元数が2であることを確認
+        db_post.x_coord = float(reduced_embeddings[0][0])
+        db_post.y_coord = float(reduced_embeddings[0][1])
+        print(f"x_coord: {db_post.x_coord}, y_coord: {db_post.y_coord}")  # コミット前に確認
+        db.commit()
+    else:
+        print("Error: Reduced embedding does not have 2 dimensions")
+
+    # デバッグ: データベースに保存された値を再度取得して確認
     db.refresh(db_post)
+    print(f"Database x_coord: {db_post.x_coord}, y_coord: {db_post.y_coord}")
 
     response_data = {
         "id": db_post.id,
@@ -257,39 +276,19 @@ def create_post(post: PostCreate, db: Session = Depends(get_db), current_user: U
     
     return response_data
 
+@app.post("/search/")
+def search_posts(query: str, db: Session = Depends(get_db)):
+    query_embedding = model.encode(query).tolist()
+    search_result = index.query(queries=[query_embedding], top_k=5)
+    
+    post_ids = [int(match['id'].split("#")[1]) for match in search_result['matches']]
+    similar_posts = db.query(Posts).filter(Posts.id.in_(post_ids)).all()
+    
+    return similar_posts
 
-
-@app.get("/map/")
+@app.get("/home/")
 def get_map_data(db: Session = Depends(get_db)):
     posts = db.query(Posts).all()
-    
-    embeddings = []
-    valid_posts = []
-    for post in posts:
-        if post.embedding:
-            embedding = np.frombuffer(post.embedding)
-            if embedding.shape == (768,):  # 正しい形状か確認
-                embeddings.append(embedding)
-                valid_posts.append(post)
-            else:
-                print(f"Unexpected embedding shape: {embedding.shape}")
-    
-    if len(embeddings) == 0:
-        raise HTTPException(status_code=404, detail="No valid embeddings found.")
-
-    # 次元削減を適用
-    reduced_embeddings = get_2d_embeddings(np.array(embeddings))
-    print("Reduced Embeddings:", reduced_embeddings)  # 圧縮されたベクトルの確認
-
-
-    # 縮小したベクトルを保存
-    for post, coord in zip(valid_posts, reduced_embeddings):
-        print(f"Saving coordinates for post {post.id}: x={coord[0]}, y={coord[1]}")
-        post.x_coord = float(coord[0])
-        post.y_coord = float(coord[1])
-        db.commit()
-
-    
     map_data = [
         {
             "id": post.id,
@@ -298,57 +297,7 @@ def get_map_data(db: Session = Depends(get_db)):
             "x": post.x_coord,
             "y": post.y_coord,
             "status": post.status
-        } for post in valid_posts
+        } for post in posts if post.x_coord is not None and post.y_coord is not None
     ]
-    
     return map_data
 
-
-
-@app.post("/search/")
-def search_posts(query: str, db: Session = Depends(get_db)):
-    query_embedding = model.encode(query).tolist()
-    search_result = index.query(queries=[query_embedding], top_k=5)
-    
-    # post_idsを抽出
-    post_ids = [int(match['id'].split("#")[1]) for match in search_result['matches']]
-    similar_posts = db.query(Posts).filter(Posts.id.in_(post_ids)).all()
-    
-    return similar_posts
-
-@app.get("/get_reduced_embeddings/")
-def get_reduced_embeddings(query: str, db: Session = Depends(get_db)):
-    # クエリに基づいてPineconeからベクトルを取得
-    query_embedding = model.encode(query).tolist()
-    search_result = index.query(queries=[query_embedding], top_k=100)
-    
-    # 取得したベクトルのIDから対応する投稿を取得
-    post_ids = [int(match['id'].split("#")[1]) for match in search_result['matches']]
-    posts = db.query(Posts).filter(Posts.id.in_(post_ids)).all()
-    
-    embeddings = []
-    valid_posts = []
-    
-    for post in posts:
-        if post.embedding:
-            embedding = np.frombuffer(post.embedding, dtype=np.float32)
-            if embedding.shape == (768,):  # 正しい形状か確認
-                embeddings.append(embedding)
-                valid_posts.append(post)
-            else:
-                print(f"Unexpected embedding shape: {embedding.shape}")
-
-    if len(embeddings) == 0:
-        raise HTTPException(status_code=404, detail="No valid embeddings found.")
-
-    # 次元削減を行う
-    reduced_embeddings = get_2d_embeddings(np.array(embeddings))
-
-    # 次元削減された結果をDBに保存
-    for post, coord in zip(valid_posts, reduced_embeddings):
-        post.x_coord = float(coord[0])
-        post.y_coord = float(coord[1])
-    
-    db.commit()
-
-    return {"message": "Reduced embeddings saved to database."}
