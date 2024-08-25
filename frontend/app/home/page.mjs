@@ -1,14 +1,14 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import styled from "styled-components";
 import { HomeIcon as HeroHomeIcon, BellIcon, PlusCircleIcon, UserCircleIcon, ChartBarIcon as DashboardIcon } from '@heroicons/react/solid';
 import axios from 'axios';
 
 const HomePage = () => {
+  // State Variables
   const [selected, setSelected] = useState("home");
   const [showPopup, setShowPopup] = useState(false);
-
   const [jobClass, setJobClass] = useState("業務");
   const [status, setStatus] = useState("やってみたい");
   const [comment, setComment] = useState("ゆる共有");
@@ -16,41 +16,187 @@ const HomePage = () => {
   const [description, setDescription] = useState("");
   const [token, setToken] = useState(null);
   const [mapData, setMapData] = useState([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [startPos, setStartPos] = useState({ x: 0, y: 0 });
+  const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
+  const [viewport, setViewport] = useState({ x: 0, y: 0, width: 3000, height: 3000 });
+  const [scale, setScale] = useState(1);
+  const canvasRef = useRef(null);
 
-  // useEffectでウィンドウサイズに合わせてキャンバスサイズを設定
-useEffect(() => {
-  const resizeCanvas = () => {
-    const canvas = document.getElementById("mapCanvas");
+  // Initial setup: Canvas offset and viewport setup
+  useEffect(() => {
+    const initialX = 10;
+    const initialY = -20;
+    setCanvasOffset({ 
+      x: -initialX * scale + window.innerWidth / 2, 
+      y: -initialY * scale + window.innerHeight / 2 
+    });
+  }, []);
+  
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
     if (canvas) {
-      canvas.width = window.innerWidth - 420; // 左側のサイドバーを考慮した幅
-      canvas.height = window.innerHeight; // ウィンドウの高さに合わせる
+      setViewport({ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight });
+      if (mapData.length > 0) {
+        plotMapData(mapData);
+      }
     }
-    if (mapData.length > 0) {
-      plotMapData(mapData); // キャンバスサイズ変更後に再プロット
+  }, [mapData]);
+
+  // Handle zoom in/out
+  const handleWheel = (event) => {
+    if (event.metaKey) {
+      event.preventDefault();
+      const zoomDirection = event.deltaY < 0 ? 1 : -1;
+      setScale((prevScale) => Math.min(Math.max(prevScale + zoomDirection * 0.1, 0.5), 5));
     }
   };
 
-  window.addEventListener("resize", resizeCanvas);
-  resizeCanvas(); // 初期ロード時にもキャンバスをリサイズ
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (canvas) {
+      canvas.addEventListener('wheel', handleWheel, { passive: false });
+      return () => canvas.removeEventListener('wheel', handleWheel);
+    }
+  }, []);
 
-  return () => {
-    window.removeEventListener("resize", resizeCanvas);
+  // Handle drag functionality
+  const handleMouseDown = (event) => {
+    setIsDragging(true);
+    setStartPos({ x: event.clientX, y: event.clientY });
   };
-}, [mapData]); // mapDataが変更されたときにもリサイズと再プロットを実行
 
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
 
-  // トークンを取得
+  const handleMouseMove = (event) => {
+    if (!isDragging) return;
+  
+    const dx = event.clientX - startPos.x;
+    const dy = event.clientY - startPos.y;
+  
+    setCanvasOffset((prevOffset) => ({
+      x: prevOffset.x + dx,
+      y: prevOffset.y + dy,
+    }));
+  
+    setStartPos({ x: event.clientX, y: event.clientY });
+  };
+
+  // Resize canvas based on window size
+  useEffect(() => {
+    const resizeCanvas = () => {
+      const canvas = canvasRef.current;
+      if (canvas) {
+        canvas.width = window.innerWidth * 2;  // キャンバスの幅を画面幅の2倍に
+        canvas.height = window.innerHeight * 2;  // キャンバスの高さを画面高さの2倍に
+        if (mapData.length > 0) {
+          plotMapData(mapData); // 初期ロード時にプロット
+        }
+      }
+    };
+    
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas(); // 初期ロード時にもキャンバスをリサイズ
+    return () => window.removeEventListener("resize", resizeCanvas);
+  }, [mapData]);
+  
+
+  // Fetch map data
   useEffect(() => {
     const savedToken = localStorage.getItem("token");
     if (savedToken) {
       setToken(savedToken);
-      fetchMapData(savedToken);  // トークンを使ってマップデータを取得
+      fetchMapData(savedToken);
     } else {
       alert("認証トークンが存在しません。ログインしてください。");
-      window.location.href = "/login"; // トークンがない場合、ログインページにリダイレクト
+      window.location.href = "/login";
     }
   }, []);
 
+  const fetchMapData = async (token) => {
+    try {
+      const response = await axios.get("http://localhost:8000/home/", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      console.log("取得したマップデータ:", response.data);
+      setMapData(response.data);
+      plotMapData(response.data);
+    } catch (error) {
+      console.error("マップデータの取得に失敗しました:", error);
+      alert("マップデータの取得に失敗しました。");
+    }
+  };
+
+  // Plot map data
+  const plotMapData = (data) => {
+    const canvas = canvasRef.current;
+  
+    if (canvas) {
+      const ctx = canvas.getContext("2d");
+  
+      // キャンバスをクリア
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+      // x, y 座標の最小値と最大値を取得
+      const xValues = data.map(point => point.x);
+      const yValues = data.map(point => point.y);
+      const xMin = Math.min(...xValues);
+      const xMax = Math.max(...xValues);
+      const yMin = Math.min(...yValues);
+      const yMax = Math.max(...yValues);
+  
+      const padding = 50; // キャンバスの端からの余白
+      const scaleX = (canvas.width - 2 * padding) / (xMax - xMin);
+      const scaleY = (canvas.height - 2 * padding) / (yMax - yMin);
+      const scale = Math.min(scaleX, scaleY);
+  
+      const offsetX = canvasOffset.x;
+      const offsetY = canvasOffset.y;
+  
+      data.forEach((point, index) => {
+        const canvasX = point.x * scale + offsetX;
+        const canvasY = point.y * scale + offsetY;
+        
+        console.log(`Plotting point ${index}: (${canvasX}, ${canvasY}), Color: ${getStatusColor(point.status)}`);
+      
+        ctx.beginPath();
+        ctx.rect(canvasX - 20, canvasY - 20, 40, 40);
+        ctx.fillStyle = "#67D4BA";
+        ctx.fill();
+        
+        ctx.beginPath();
+        ctx.arc(canvasX, canvasY, 10, 0, 2 * Math.PI);
+        ctx.fillStyle = getStatusColor(point.status);
+        ctx.fill();
+      });
+      
+  
+  
+  useEffect(() => {
+    plotMapData(mapData);  // データを描画
+  }, [mapData, canvasOffset, viewport, scale]);
+  
+  
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case "やってた":
+        return "#C3C3C3";
+      case "検討中":
+        return "#FFE03D";
+      case "やってみたい":
+        return "#FF7527";
+      default:
+        return "#FFFFFF";
+    }
+  };
+
+  // Handle icon click
   const handleIconClick = (icon) => {
     if (selected === icon) {
       setShowPopup(!showPopup);
@@ -60,78 +206,7 @@ useEffect(() => {
     }
   };
 
-  const fetchMapData = async (token) => {
-    try {
-      const response = await axios.get("http://localhost:8000/map/", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      console.log("取得したマップデータ:", response.data);  // デバッグ用に取得したデータを表示
-      setMapData(response.data);  // マップデータを保存
-      plotMapData(response.data);  // マップにプロット
-    } catch (error) {
-      console.error("マップデータの取得に失敗しました:", error);
-      alert("マップデータの取得に失敗しました。");
-    }
-  };
-  
-
-
-// ステータスに応じた色を返す関数
-const getStatusColor = (status) => {
-  switch (status) {
-    case "やってた":
-      return "#C3C3C3";
-    case "検討中":
-      return "#FFE03D";
-    case "やってみたい":
-      return "#FF7527";
-    default:
-      return "#FFFFFF";
-  }
-};
-
-const plotMapData = (data) => {
-  const canvas = document.getElementById("mapCanvas");
-  if (canvas) {
-    const ctx = canvas.getContext("2d");
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // x, y 座標の最小値と最大値を取得
-    const xValues = data.map(point => point.x);
-    const yValues = data.map(point => point.y);
-    const xMin = Math.min(...xValues);
-    const xMax = Math.max(...xValues);
-    const yMin = Math.min(...yValues);
-    const yMax = Math.max(...yValues);
-
-    console.log("プロットするデータ:", data);  // デバッグ用にプロットデータを表示
-
-    data.forEach((point) => {
-      // 座標を正規化
-      const normalizedX = (point.x - xMin) / (xMax - xMin);
-      const normalizedY = (point.y - yMin) / (yMax - yMin);
-
-      ctx.beginPath();
-      ctx.rect(normalizedX * canvas.width - 10, normalizedY * canvas.height - 10, 20, 20);  // 四角形を描画
-      ctx.fillStyle = getStatusColor(point.status);  // ステータスに応じた色を設定
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.arc(normalizedX * canvas.width, normalizedY * canvas.height, 5, 0, 2 * Math.PI);  // 中央の円を描画
-      ctx.fillStyle = "#FF5733";
-      ctx.fill();
-    });
-  }
-};
-
-
-
-
-
-  // フォーム送信処理
+  // Handle form submission
   const handleSubmit = async () => {
     if (!token) {
       alert("トークンが存在しません。ログインしてください。");
@@ -148,13 +223,12 @@ const plotMapData = (data) => {
     };
 
     try {
-      const response = await axios.post("http://localhost:8000/posts/", data, {
+      const response = await axios.post("http://localhost:8000/home/", data, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
       });
       console.log("投稿成功:", response.data);
-      // フォームのリセット
       setJobClass("業務");
       setStatus("やってみたい");
       setComment("ゆる共有");
@@ -164,14 +238,16 @@ const plotMapData = (data) => {
     } catch (error) {
       if (error.response && error.response.status === 401) {
         alert("セッションの有効期限が切れています。再度ログインしてください。");
-        localStorage.removeItem("token");  // トークンを削除
-        window.location.href = "/login";  // ログインページにリダイレクト
+        localStorage.removeItem("token");
+        window.location.href = "/login";
       } else {
         console.error("投稿失敗:", error);
         alert("投稿に失敗しました。");
       }
     }
   };
+
+
 
   return (
     <Container>
@@ -380,7 +456,16 @@ const plotMapData = (data) => {
           </Popup>
         )}
         <MapArea>
-          <MapCanvas id="mapCanvas"></MapCanvas>
+          <MapCanvas
+            ref={canvasRef}
+            width={3000}
+            height={3000}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}  // マウスがキャンバスから離れた時にドラッグを解除
+            onWheel={handleWheel}
+          ></MapCanvas>
         </MapArea>
       </MainContent>
     </Container>
@@ -394,6 +479,7 @@ const Container = styled.div`
   height: 100vh;
   width: 100vw;
   background-color: #2FA6FF;
+  overflow: hidden;  // スクロールバーが表示されないように
 `;
 
 const Sidebar = styled.div`
@@ -430,7 +516,7 @@ const Spacer = styled.div`
 const MainContent = styled.div`
   flex: 1;
   position: relative;
-  overflow: hidden;
+  overflow: hidden;  // 必要に応じてオーバーフローを隠す
 `;
 
 const Popup = styled.div`
@@ -525,11 +611,9 @@ const PostButton = styled.button`
 `;
 
 const MapArea = styled.div`
-  position: absolute;
-  top: 0;
-  left: 420px;
-  right: 0;
-  bottom: 0;
+  position: relative;
+  width: 100%;  // ビューポート幅にフィットさせる
+  height: 100%;  // ビューポート高さにフィットさせる
   background-color: #67D5BA;
   display: flex;
   justify-content: center;
@@ -537,9 +621,10 @@ const MapArea = styled.div`
 `;
 
 const MapCanvas = styled.canvas`
-  width: 100%;
-  height: 100%;
+  width: 5000px;
+  height: 5000px;
   background-color: #2FA6FF;
+  border: 2px solid red;  // デバッグのために赤い枠を追加
 `;
 
 const SearchButton = styled.button`
@@ -551,4 +636,21 @@ const SearchButton = styled.button`
   background-color: transparent;
   cursor: pointer;
   margin-left: 10px;
+`;
+
+const MiniMapWrapper = styled.div`
+  position: fixed;  // 固定位置に変更
+  top: 10px;  // 画面の上から10px
+  right: 100px;  // 画面の右から100px
+  width: 150px;
+  height: 150px;
+  border: 1px solid #ccc;
+  background-color: rgba(255, 255, 255, 0.8);
+  z-index: 1000;
+`;
+
+const MiniMapCanvas = styled.canvas`
+  width: 100%;
+  height: 100%;
+  border: 2px solid blue;  // デバッグのために青い枠を追加
 `;
