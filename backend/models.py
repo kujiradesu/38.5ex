@@ -1,7 +1,10 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, LargeBinary
+from sqlalchemy import Column, Integer, String, ForeignKey, LargeBinary, Float, Text
 from sqlalchemy.orm import relationship
 from .database import Base
+from sqlalchemy import Double
 
+
+# Userモデル: ユーザー情報を保存するためのテーブル
 class User(Base):
     __tablename__ = "users"
 
@@ -12,16 +15,20 @@ class User(Base):
 
     posts = relationship("Posts", back_populates="user", cascade="all, delete-orphan")
 
+# Postsモデル: 投稿情報を保存するためのテーブル
 class Posts(Base):
-    __tablename__ = "posts"
-
+    __tablename__ = 'posts'
+    
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
-    activity_type = Column(String(50), index=True)
-    status = Column(String(50), index=True)
-    comment = Column(String(50), index=True)
-    title = Column(String(100), index=True)
-    description = Column(String(200))
-    embedding = Column(LargeBinary)  # バイナリとして保存するカラム
+    activity_type = Column(String(255), nullable=False)
+    status = Column(String(255), nullable=False)
+    comment = Column(String(255), nullable=True)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    embedding = Column(LargeBinary, nullable=True)
+
+    x_coord = Column(Double, nullable=True)  # 変更例
+    y_coord = Column(Double, nullable=True)  # 変更例
 
     user = relationship("User", back_populates="posts")
