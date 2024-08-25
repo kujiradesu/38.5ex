@@ -15,12 +15,36 @@ const HomePage = () => {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [token, setToken] = useState(null);
+  const [mapData, setMapData] = useState([]);
+
+  // useEffectでウィンドウサイズに合わせてキャンバスサイズを設定
+useEffect(() => {
+  const resizeCanvas = () => {
+    const canvas = document.getElementById("mapCanvas");
+    if (canvas) {
+      canvas.width = window.innerWidth - 420; // 左側のサイドバーを考慮した幅
+      canvas.height = window.innerHeight; // ウィンドウの高さに合わせる
+    }
+    if (mapData.length > 0) {
+      plotMapData(mapData); // キャンバスサイズ変更後に再プロット
+    }
+  };
+
+  window.addEventListener("resize", resizeCanvas);
+  resizeCanvas(); // 初期ロード時にもキャンバスをリサイズ
+
+  return () => {
+    window.removeEventListener("resize", resizeCanvas);
+  };
+}, [mapData]); // mapDataが変更されたときにもリサイズと再プロットを実行
+
 
   // トークンを取得
   useEffect(() => {
     const savedToken = localStorage.getItem("token");
     if (savedToken) {
       setToken(savedToken);
+      fetchMapData(savedToken);  // トークンを使ってマップデータを取得
     } else {
       alert("認証トークンが存在しません。ログインしてください。");
       window.location.href = "/login"; // トークンがない場合、ログインページにリダイレクト
@@ -36,17 +60,82 @@ const HomePage = () => {
     }
   };
 
-  // 追加: フォームの送信処理
+  const fetchMapData = async (token) => {
+    try {
+      const response = await axios.get("http://localhost:8000/map/", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      console.log("取得したマップデータ:", response.data);  // デバッグ用に取得したデータを表示
+      setMapData(response.data);  // マップデータを保存
+      plotMapData(response.data);  // マップにプロット
+    } catch (error) {
+      console.error("マップデータの取得に失敗しました:", error);
+      alert("マップデータの取得に失敗しました。");
+    }
+  };
+  
+
+
+// ステータスに応じた色を返す関数
+const getStatusColor = (status) => {
+  switch (status) {
+    case "やってた":
+      return "#C3C3C3";
+    case "検討中":
+      return "#FFE03D";
+    case "やってみたい":
+      return "#FF7527";
+    default:
+      return "#FFFFFF";
+  }
+};
+
+const plotMapData = (data) => {
+  const canvas = document.getElementById("mapCanvas");
+  if (canvas) {
+    const ctx = canvas.getContext("2d");
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // x, y 座標の最小値と最大値を取得
+    const xValues = data.map(point => point.x);
+    const yValues = data.map(point => point.y);
+    const xMin = Math.min(...xValues);
+    const xMax = Math.max(...xValues);
+    const yMin = Math.min(...yValues);
+    const yMax = Math.max(...yValues);
+
+    console.log("プロットするデータ:", data);  // デバッグ用にプロットデータを表示
+
+    data.forEach((point) => {
+      // 座標を正規化
+      const normalizedX = (point.x - xMin) / (xMax - xMin);
+      const normalizedY = (point.y - yMin) / (yMax - yMin);
+
+      ctx.beginPath();
+      ctx.rect(normalizedX * canvas.width - 10, normalizedY * canvas.height - 10, 20, 20);  // 四角形を描画
+      ctx.fillStyle = getStatusColor(point.status);  // ステータスに応じた色を設定
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(normalizedX * canvas.width, normalizedY * canvas.height, 5, 0, 2 * Math.PI);  // 中央の円を描画
+      ctx.fillStyle = "#FF5733";
+      ctx.fill();
+    });
+  }
+};
+
+
+
+
+
+  // フォーム送信処理
   const handleSubmit = async () => {
     if (!token) {
       alert("トークンが存在しません。ログインしてください。");
       window.location.href = "/login";
-      return;
-    }
-
-    // フィールドのバリデーション
-    if (!title.trim() || !description.trim() || !jobClass || !status || !comment) {
-      alert("すべてのフィールドを入力してください。");
       return;
     }
 
@@ -61,11 +150,10 @@ const HomePage = () => {
     try {
       const response = await axios.post("http://localhost:8000/posts/", data, {
         headers: {
-          Authorization: `Bearer ${token}`,  // トークンをヘッダーに追加
+          Authorization: `Bearer ${token}`,
         },
       });
       console.log("投稿成功:", response.data);
-      alert("投稿が完了しました！");
       // フォームのリセット
       setJobClass("業務");
       setStatus("やってみたい");
@@ -84,7 +172,6 @@ const HomePage = () => {
       }
     }
   };
-
 
   return (
     <Container>
@@ -293,8 +380,7 @@ const HomePage = () => {
           </Popup>
         )}
         <MapArea>
-          {/* ダミーのマップを表示 */}
-          <DummyMap />
+          <MapCanvas id="mapCanvas"></MapCanvas>
         </MapArea>
       </MainContent>
     </Container>
@@ -450,11 +536,10 @@ const MapArea = styled.div`
   align-items: center;
 `;
 
-const DummyMap = styled.div`
-  width: 1210px;
-  height: 832px;
+const MapCanvas = styled.canvas`
+  width: 100%;
+  height: 100%;
   background-color: #2FA6FF;
-  overflow: scroll;
 `;
 
 const SearchButton = styled.button`
