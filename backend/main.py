@@ -10,24 +10,31 @@ import base64
 import bcrypt
 import umap
 import pinecone
+from backend.database import engine, Base, SessionLocal
+
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from datetime import datetime, timedelta
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from dotenv import load_dotenv
 from typing import List, Optional
-from pinecone import Pinecone, ServerlessSpec  # 修正ポイント：Pineconeのインポート
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+from sklearn.cluster import DBSCAN
+from pydantic import BaseModel
+from typing import Optional
 
 from backend.database import engine, Base, SessionLocal
-from backend.models import User, Posts
+from backend.models import User, Posts, UserProfile, ProfileResponse
 from backend.routers import router
-from passlib.context import CryptContext
+from passlib.context import CryptContext  # 修正ポイント：CryptContextのインポート
+
 
 # Load environment variables
 load_dotenv()
@@ -36,9 +43,9 @@ load_dotenv()
 api_key = os.getenv("PINECONE_API_KEY")
 if not api_key:
     raise ValueError("Pinecone APIキーが設定されていません。")
-
+print("Pinecone APIキー:", api_key)
 # 修正ポイント：Pineconeのインスタンスを作成
-pc = Pinecone(api_key=api_key)
+pc = pinecone.Pinecone(api_key=api_key)
 
 index_name = "my-index"
 
@@ -96,29 +103,48 @@ def get_db():
     finally:
         db.close()
 
+# main.pyのvectorize_post関数内に追加
+
 def vectorize_post(title: str, description: str) -> np.ndarray:
     title_embedding = model.encode(title)
     description_embedding = model.encode(description)
     
-    # 生成されたベクトルの次元数を確認
-    print(f"Title embedding dimension: {title_embedding.shape}")
-    print(f"Description embedding dimension: {description_embedding.shape}")
-    
-    combined_embedding = (title_embedding + description_embedding) / 2
-    
-    # 結合されたベクトルの次元数を確認
-    print(f"Combined embedding dimension: {combined_embedding.shape}")
-    
+    # タイトルに0.6、詳細説明に0.4の重みを付けて平均化
+    combined_embedding = 0.6 * title_embedding + 0.4 * description_embedding
+
+    # エンベディングのデバッグ出力
+    print(f"Title embedding: {title_embedding}")
+    print(f"Description embedding: {description_embedding}")
+    print(f"Combined embedding: {combined_embedding}")
+
     return combined_embedding
 
+# クラスタリングを実行する関数
+def cluster_embeddings(embeddings):
+    # DBSCANを使ってクラスタリング
+    clustering = DBSCAN(eps=0.5, min_samples=5, metric='cosine').fit(embeddings)
+    labels = clustering.labels_
+    
+    # ラベルが-1の場合、ノイズとして扱う
+    print(f"Labels: {labels}")
+    return labels
 
 
-def get_2d_embeddings(embeddings):
-    # UMAPのパラメータを調整してみる
-    umap_model = umap.UMAP(n_neighbors=5, min_dist=0.01, metric='cosine')
-    reduced_embeddings = umap_model.fit_transform(embeddings)
-    print(f"Reduced Embeddings: {reduced_embeddings}")  # デバッグのために出力
+# t-SNEを使って次元削減を行う関数
+def get_2d_embeddings_with_tsne(embeddings):
+    embeddings = np.array(embeddings)
+    
+    try:
+        tsne = TSNE(n_components=2, perplexity=5, random_state=42)
+        reduced_embeddings = tsne.fit_transform(embeddings)
+        print(f"Reduced Embeddings with t-SNE: {reduced_embeddings}")
+    except Exception as e:
+        print(f"t-SNE failed: {e}")
+        reduced_embeddings = embeddings[:, :2]  # 最初の2つの次元を使用
+    
     return reduced_embeddings
+
+
 
 
 
@@ -162,6 +188,8 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     username: Optional[str] = None
     email: Optional[str] = None
+
+
 
 class PostCreate(BaseModel):
     activity_type: str
@@ -216,6 +244,51 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
 
     return {"message": "User and related posts deleted"}
 
+@app.get("/profile", response_model=ProfileResponse)
+def get_profile(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    profile = db.query(UserProfile).filter(UserProfile.user_id == current_user.id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    profile_data = {
+        "username": current_user.username,
+        "jobTitle": profile.job_title,
+        "jobDescription": profile.work_description,
+        "interests": profile.interests,
+        "skills": profile.skills,
+        "values": profile.values,
+        "officeFloor": profile.frequent_floor,
+        "profileImage": profile.profile_picture
+    }
+    return profile_data
+
+@app.put("/profile", response_model=ProfileResponse)
+def update_profile(profile_data: ProfileResponse, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    profile = db.query(UserProfile).filter(UserProfile.user_id == current_user.id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    
+    profile.job_title = profile_data.jobTitle
+    profile.job_description = profile_data.jobDescription
+    profile.interests = profile_data.interests
+    profile.skills = profile_data.skills
+    profile.values = profile_data.values
+    profile.office_floor = profile_data.officeFloor
+    profile.profile_image = profile_data.profileImage
+    
+    db.commit()
+    db.refresh(profile)
+    
+    return ProfileResponse(
+        username=current_user.username,
+        jobTitle=profile.job_title,
+        jobDescription=profile.job_description,
+        interests=profile.interests,
+        skills=profile.skills,
+        values=profile.values,
+        officeFloor=profile.office_floor,
+        profileImage=profile.profile_image
+    )
+
 @app.post("/login")
 def login(request: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == request.username).first()
@@ -226,10 +299,14 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
     access_token = create_access_token(data={"sub": str(user.id)})
     return {"access_token": access_token, "token_type": "bearer"}
 
+# POSTリクエストの処理部分に追加
 @app.post("/home/")
 def create_post(post: PostCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # タイトルと説明からベクトルを作成します
     embedding = vectorize_post(post.title, post.description)
+    
+    # クラスタリングを実行
+    labels = cluster_embeddings([embedding])
     
     # 新しいポストをデータベースに保存します
     db_post = Posts(
@@ -246,9 +323,9 @@ def create_post(post: PostCreate, db: Session = Depends(get_db), current_user: U
     db.commit()
     db.refresh(db_post)
 
-    # UMAPで次元削減を行う
-    reduced_embeddings = get_2d_embeddings([embedding])
-    print(f"Reduced 2D Embeddings: {reduced_embeddings}")  # ここで次元削減結果を出力
+    # t-SNEで次元削減を行う
+    reduced_embeddings = get_2d_embeddings_with_tsne([embedding])
+    print(f"Reduced 2D Embeddings: {reduced_embeddings}")
 
     if reduced_embeddings.shape[1] == 2:  # 次元数が2であることを確認
         db_post.x_coord = float(reduced_embeddings[0][0])
@@ -288,7 +365,11 @@ def search_posts(query: str, db: Session = Depends(get_db)):
 
 @app.get("/home/")
 def get_map_data(db: Session = Depends(get_db)):
-    posts = db.query(Posts).all()
+    try:
+        posts = db.query(Posts).all()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
     map_data = [
         {
             "id": post.id,
@@ -301,3 +382,13 @@ def get_map_data(db: Session = Depends(get_db)):
     ]
     return map_data
 
+
+@app.on_event("startup")
+def startup_event():
+    try:
+        # データベース接続をテストするための簡単なクエリ
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        print("Database connected successfully.")
+    except Exception as e:
+        print("Database connection failed:", e)

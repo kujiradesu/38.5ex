@@ -2,8 +2,9 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import styled from "styled-components";
-import { HomeIcon as HeroHomeIcon, BellIcon, PlusCircleIcon, UserCircleIcon, ChartBarIcon as DashboardIcon } from '@heroicons/react/solid';
 import axios from 'axios';
+import { HomeIcon as HeroHomeIcon, BellIcon, PlusCircleIcon, UserCircleIcon, ChartBarIcon, PencilIcon, ArrowLeftIcon as DashboardIcon, UserIcon } from '@heroicons/react/solid';
+
 
 const HomePage = () => {
   // State Variables
@@ -22,6 +23,80 @@ const HomePage = () => {
   const [viewport, setViewport] = useState({ x: 0, y: 0, width: 3000, height: 3000 });
   const [scale, setScale] = useState(1);
   const canvasRef = useRef(null);
+  const [profileData, setProfileData] = useState(null);  // プロフィールデータの状態変数を追加
+  const [isEditing, setIsEditing] = useState(false);  // 編集モードの状態
+  const [saveMessage, setSaveMessage] = useState('');  // 保存メッセージの状態
+  const fileInputRef = useRef(null);
+  
+
+  const fetchProfileData = async () => {
+    try {
+        const response = await axios.get('http://localhost:8000/home', {
+            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+        });
+        setProfileData(response.data);
+    } catch (error) {
+        console.error('プロフィールデータの取得に失敗しました:', error);
+        // トークンが無効な場合にログインページにリダイレクトする
+        if (error.response && error.response.status === 401) {
+            alert("セッションの有効期限が切れています。再度ログインしてください。");
+            localStorage.removeItem("token");
+            window.location.href = "/login";
+        }
+    }
+  };
+
+  const handleProfileChange = (e) => {
+    const { name, value } = e.target;
+    setProfileData((prevData) => ({
+      ...prevData,
+      [name]: value,
+    }));
+  };
+  
+   // 画像をタップしたときにファイル選択ダイアログを開く関数
+   const handleImageClick = () => {
+    fileInputRef.current.click();  // ファイル選択ダイアログを開く
+  };
+
+    // 画像ファイルが選択されたときに実行する関数
+    const handleFileChange = async (event) => {
+      const file = event.target.files[0];
+      if (file) {
+        const formData = new FormData();
+        formData.append("profileImage", file);
+  
+        try {
+          const response = await axios.post("http://localhost:8000/upload", formData, {
+            headers: {
+              "Content-Type": "multipart/form-data",
+              Authorization: `Bearer ${localStorage.getItem('token')}`
+            }
+          });
+          setProfileData((prevData) => ({
+            ...prevData,
+            profileImage: response.data.profileImageUrl,  // サーバーから返された画像URLを使用
+          }));
+        } catch (error) {
+          console.error("画像アップロードに失敗しました:", error);
+        }
+      }
+    };
+
+
+  const handleProfileSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const response = await axios.put('http://localhost:8000/home', profileData, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      setSaveMessage('プロフィールが変更されました');
+      setIsEditing(false);
+    } catch (error) {
+      console.error('プロフィールの更新に失敗しました:', error);
+    }
+  };
+  
 
   // Initial setup: Canvas offset and viewport setup
   useEffect(() => {
@@ -33,7 +108,6 @@ const HomePage = () => {
     });
   }, []);
   
-
   useEffect(() => {
     const canvas = canvasRef.current;
     if (canvas) {
@@ -90,19 +164,18 @@ const HomePage = () => {
     const resizeCanvas = () => {
       const canvas = canvasRef.current;
       if (canvas) {
-        canvas.width = window.innerWidth * 2;  // キャンバスの幅を画面幅の2倍に
-        canvas.height = window.innerHeight * 2;  // キャンバスの高さを画面高さの2倍に
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
         if (mapData.length > 0) {
-          plotMapData(mapData); // 初期ロード時にプロット
+          plotMapData(mapData);
         }
       }
     };
     
     window.addEventListener("resize", resizeCanvas);
-    resizeCanvas(); // 初期ロード時にもキャンバスをリサイズ
+    resizeCanvas();
     return () => window.removeEventListener("resize", resizeCanvas);
   }, [mapData]);
-  
 
   // Fetch map data
   useEffect(() => {
@@ -110,6 +183,7 @@ const HomePage = () => {
     if (savedToken) {
       setToken(savedToken);
       fetchMapData(savedToken);
+      fetchProfileData();  // プロフィールデータも一緒に取得
     } else {
       alert("認証トークンが存在しません。ログインしてください。");
       window.location.href = "/login";
@@ -118,18 +192,67 @@ const HomePage = () => {
 
   const fetchMapData = async (token) => {
     try {
-      const response = await axios.get("http://localhost:8000/home/", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      console.log("取得したマップデータ:", response.data);
-      setMapData(response.data);
-      plotMapData(response.data);
+        const response = await axios.get("http://localhost:8000/home/", {
+            headers: {
+                Authorization: `Bearer ${token}`,
+            },
+        });
+        console.log("Fetched map data:", response.data);
+        setMapData(response.data);
+        plotMapData(response.data);  // データをプロット
     } catch (error) {
-      console.error("マップデータの取得に失敗しました:", error);
-      alert("マップデータの取得に失敗しました。");
+        console.error("マップデータの取得に失敗しました:", error);
+        alert("マップデータの取得に失敗しました。");
     }
+  };
+
+    // Handle form submission
+    const handleSubmit = async () => {
+      if (!token) {
+          alert("トークンが存在しません。ログインしてください。");
+          window.location.href = "/login";
+          return;
+      }
+  
+      const data = {
+          activity_type: jobClass,
+          status: status,
+          comment: comment,
+          title: title,
+          description: description,
+      };
+  
+      try {
+          const response = await axios.post("http://localhost:8000/home/", data, {
+              headers: {
+                  Authorization: `Bearer ${token}`,
+              },
+          });
+  
+          // フォームのリセット
+          setJobClass("業務");
+          setStatus("やりたいこと");
+          setComment("ゆる共有");
+          setTitle("");
+          setDescription("");
+          setShowPopup(false);
+  
+          // 新しいデータを取得して即時反映
+          fetchMapData(token);
+      } catch (error) {
+          if (error.response && error.response.status === 401) {
+              alert("セッションの有効期限が切れています。再度ログインしてください。");
+              localStorage.removeItem("token");
+              window.location.href = "/login";
+          } else {
+              console.error("投稿失敗:", error);
+              alert("投稿に失敗しました。");
+          }
+      }
+  };
+  
+  const toggleEditing = () => {
+    setIsEditing(!isEditing);
   };
 
   // Plot map data
@@ -138,11 +261,8 @@ const HomePage = () => {
   
     if (canvas) {
       const ctx = canvas.getContext("2d");
-  
-      // キャンバスをクリア
       ctx.clearRect(0, 0, canvas.width, canvas.height);
   
-      // x, y 座標の最小値と最大値を取得
       const xValues = data.map(point => point.x);
       const yValues = data.map(point => point.y);
       const xMin = Math.min(...xValues);
@@ -150,25 +270,25 @@ const HomePage = () => {
       const yMin = Math.min(...yValues);
       const yMax = Math.max(...yValues);
   
-      const padding = 50; // キャンバスの端からの余白
+      const padding = 50;
       const scaleX = (canvas.width - 2 * padding) / (xMax - xMin);
       const scaleY = (canvas.height - 2 * padding) / (yMax - yMin);
       const scale = Math.min(scaleX, scaleY);
   
-      const offsetX = canvasOffset.x;
-      const offsetY = canvasOffset.y;
+      const offsetX = padding - xMin * scale;
+      const offsetY = padding - yMin * scale;
   
-      data.forEach((point, index) => {
+      // データポイントの描画
+      data.forEach((point) => {
         const canvasX = point.x * scale + offsetX;
         const canvasY = point.y * scale + offsetY;
-        
-        console.log(`Plotting point ${index}: (${canvasX}, ${canvasY}), Color: ${getStatusColor(point.status)}`);
-      
-        ctx.beginPath();
-        ctx.rect(canvasX - 20, canvasY - 20, 40, 40);
+  
+        // 四角の背景の描画
+        const rectSize = 50;
         ctx.fillStyle = "#67D4BA";
-        ctx.fill();
-        
+        ctx.fillRect(canvasX - rectSize / 2, canvasY - rectSize / 2, rectSize, rectSize);
+  
+        // 丸の描画
         ctx.beginPath();
         ctx.arc(canvasX, canvasY, 10, 0, 2 * Math.PI);
         ctx.fillStyle = getStatusColor(point.status);
@@ -176,79 +296,47 @@ const HomePage = () => {
       });
     }
   };
-      
   
-  useEffect(() => {
-    plotMapData(mapData);  // データを描画
-  }, [mapData, canvasOffset, viewport, scale]);
-  
-  
-
   const getStatusColor = (status) => {
     switch (status) {
-      case "やってた":
+      case "やってたこと":
         return "#C3C3C3";
-      case "検討中":
+      case "やってること":
         return "#FFE03D";
-      case "やってみたい":
-        return "#FF7527";
+      case "やりたいこと":
+        return "#FF882F";
       default:
         return "#FFFFFF";
     }
   };
 
-  // Handle icon click
   const handleIconClick = (icon) => {
+    console.log(`Icon clicked: ${icon}, current selected: ${selected}`);
     if (selected === icon) {
-      setShowPopup(!showPopup);
+        setShowPopup(!showPopup);
     } else {
-      setSelected(icon);
-      setShowPopup(true);
+        setSelected(icon);
+        setShowPopup(true);
     }
-  };
+    console.log(`Popup state: ${showPopup}, new selected: ${selected}`);
+};
 
-  // Handle form submission
-  const handleSubmit = async () => {
-    if (!token) {
-      alert("トークンが存在しません。ログインしてください。");
-      window.location.href = "/login";
-      return;
-    }
-
-    const data = {
-      activity_type: jobClass,
-      status: status,
-      comment: comment,
-      title: title,
-      description: description,
+const handleImageUpload = (event) => {
+  const file = event.target.files[0];
+  if (file) {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setProfileData((prevData) => ({
+        ...prevData,
+        profileImage: reader.result,  // Base64エンコードされた画像データを保存
+      }));
     };
-
-    try {
-      const response = await axios.post("http://localhost:8000/home/", data, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      console.log("投稿成功:", response.data);
-      setJobClass("業務");
-      setStatus("やってみたい");
-      setComment("ゆる共有");
-      setTitle("");
-      setDescription("");
-      setShowPopup(false);
-    } catch (error) {
-      if (error.response && error.response.status === 401) {
-        alert("セッションの有効期限が切れています。再度ログインしてください。");
-        localStorage.removeItem("token");
-        window.location.href = "/login";
-      } else {
-        console.error("投稿失敗:", error);
-        alert("投稿に失敗しました。");
-      }
-    }
-  };
+    reader.readAsDataURL(file);
+  }
+};
 
 
+  
 
   return (
     <Container>
@@ -287,6 +375,7 @@ const HomePage = () => {
       </Sidebar>
       <MainContent>
         {showPopup && selected === "home" && (
+          console.log("Displaying Home popup"),
           <Popup>
             <SearchFieldWrapper>
               <Section>
@@ -312,22 +401,22 @@ const HomePage = () => {
                 <Description>ステータスを選択してください。</Description>
                 <ButtonGroup>
                   <Button
-                    selected={status === "やってた"}
-                    onClick={() => setStatus("やってた")}
+                    selected={status === "やってたこと"}
+                    onClick={() => setStatus("やってたこと")}
                   >
-                    やってた
+                    やってたこと
                   </Button>
                   <Button
-                    selected={status === "活動中"}
-                    onClick={() => setStatus("活動中")}
+                    selected={status === "やってること"}
+                    onClick={() => setStatus("やってること")}
                   >
-                    活動中
+                    やってること
                   </Button>
                   <Button
-                    selected={status === "やってみたい"}
-                    onClick={() => setStatus("やってみたい")}
+                    selected={status === "やりたいこと"}
+                    onClick={() => setStatus("やりたいこと")}
                   >
-                    やってみたい
+                    やりたいこと
                   </Button>
                 </ButtonGroup>
               </Section>
@@ -367,6 +456,7 @@ const HomePage = () => {
           </Popup>
         )}
         {showPopup && selected === "post" && (
+          console.log("Displaying Home popup"),
           <Popup>
             <PopupTitle>投稿を作成する</PopupTitle>
             <SearchFieldWrapper>
@@ -393,49 +483,49 @@ const HomePage = () => {
                 <Description>ステータスを選択してください。</Description>
                 <ButtonGroup>
                   <Button
-                    selected={status === "やってた"}
-                    onClick={() => setStatus("やってた")}
+                    selected={status === "やってたこと"}
+                    onClick={() => setStatus("やってたこと")}
                   >
-                    やってた
+                    やってたこと
                   </Button>
                   <Button
-                    selected={status === "活動中"}
-                    onClick={() => setStatus("活動中")}
+                    selected={status === "やってること"}
+                    onClick={() => setStatus("やってること")}
                   >
-                    活動中
+                    やってること
                   </Button>
                   <Button
-                    selected={status === "やってみたい"}
-                    onClick={() => setStatus("やってみたい")}
+                    selected={status === "やりたいこと"}
+                    onClick={() => setStatus("やりたいこと")}
                   >
-                    やってみたい
+                    やりたいこと
                   </Button>
                 </ButtonGroup>
               </Section>
               <Section>
-                <h2>コメント</h2>
-                <Description>コメントを選択してください。</Description>
-                <ButtonGroup>
-                  <Button
-                    selected={comment === "ゆる共有"}
-                    onClick={() => setComment("ゆる共有")}
-                  >
-                    ゆる共有
-                  </Button>
-                  <Button
-                    selected={comment === "コメントぜひ！"}
-                    onClick={() => setComment("コメントぜひ！")}
-                  >
-                    コメントぜひ！
-                  </Button>
-                  <Button
-                    selected={comment === "仲間募集中！"}
-                    onClick={() => setComment("仲間募集中！")}
-                  >
-                    仲間募集中！
-                  </Button>
-                </ButtonGroup>
-              </Section>
+              <h2>コメント</h2>
+              <Description>コメントを選択してください。</Description>
+              <ButtonGroup>
+                <Button
+                  selected={comment === "ゆる共有"}
+                  onClick={() => setComment("ゆる共有")}
+                >
+                  ゆる共有
+                </Button>
+                <Button
+                  selected={comment === "コメントぜひ！"}
+                  onClick={() => setComment("コメントぜひ！")}
+                >
+                  コメントぜひ！
+                </Button>
+                <Button
+                  selected={comment === "仲間募集中！"}
+                  onClick={() => setComment("仲間募集中！")}
+                >
+                  仲間募集中！
+                </Button>
+              </ButtonGroup>
+            </Section>
               <Section>
                 <Description>タイトル</Description>
                 <InputForm
@@ -456,6 +546,137 @@ const HomePage = () => {
             </SearchFieldWrapper>
           </Popup>
         )}
+        {showPopup && selected === "profile" && profileData && (
+          console.log("Displaying Home popup"),
+          <Popup>
+            <ProfileContainer>
+            <ProfileImageWrapper>
+                {profileData.profileImage ? (
+                  <ProfileImage 
+                    src={profileData.profileImage} 
+                    alt="プロフィール画像" 
+                    className="profile-image-large"
+                  />
+                ) : (
+                  <UserIcon className="h-48 w-48 text-gray-500" />
+                )}
+                {isEditing && (
+                  <>
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      style={{ display: 'none' }}
+                      onChange={handleImageUpload}
+                    />
+                    <UploadButton onClick={() => fileInputRef.current.click()}>
+                      画像アップロード
+                    </UploadButton>
+                  </>
+                )}
+              </ProfileImageWrapper>
+              <ProfileInfo>
+                <h2>{profileData.username}</h2>
+                <button onClick={toggleEditing}>
+                  {/* Heroiconsの鉛筆アイコンに変更 */}
+                  <PencilIcon className="h-6 w-6 text-gray-500" alt="編集" />
+                </button>
+
+                {!isEditing ? (
+                  <>
+                    <p><strong>ニックネーム:</strong> {profileData.nickname}</p>
+                    <p><strong>職種:</strong> {profileData.jobTitle}</p>
+                    <p><strong>仕事内容:</strong> {profileData.jobDescription}</p>
+                    <p><strong>興味のある分野:</strong> {profileData.interests}</p>
+                    <p><strong>得意なこと:</strong> {profileData.skills}</p>
+                    <p><strong>大事にしていること:</strong> {profileData.values}</p>
+                    <p><strong>よく行くフロア:</strong> {profileData.officeFloor}</p>
+                  </>
+                ) : (
+                  <form onSubmit={handleProfileSubmit}>
+                    <label>
+                      ニックネーム: 
+                      <InputForm 
+                        type="text" 
+                        name="nickname" 
+                        value={profileData.nickname || ''} 
+                        onChange={handleProfileChange} 
+                      />
+                    </label>
+                    <label>
+                      職種: 
+                      <InputForm 
+                        type="text" 
+                        name="jobTitle" 
+                        value={profileData.jobTitle || ''} 
+                        onChange={handleProfileChange} 
+                      />
+                    </label>
+                    <label>
+                      仕事内容:
+                      <InputForm 
+                        type="text" 
+                        name="jobDescription" 
+                        value={profileData.jobDescription || ''} 
+                        onChange={handleProfileChange} 
+                      />
+                    </label>
+                    <label>
+                      興味のある分野:
+                      <InputForm 
+                        type="text" 
+                        name="interests" 
+                        value={profileData.interests || ''} 
+                        onChange={handleProfileChange} 
+                      />
+                    </label>
+                    <label>
+                      得意なこと:
+                      <InputForm 
+                        type="text" 
+                        name="skills" 
+                        value={profileData.skills || ''} 
+                        onChange={handleProfileChange} 
+                      />
+                    </label>
+                    <label>
+                      大事にしていること:
+                      <InputForm 
+                        type="text" 
+                        name="values" 
+                        value={profileData.values || ''} 
+                        onChange={handleProfileChange} 
+                      />
+                    </label>
+                    <label>
+                      よく行くフロア:
+                      <InputForm 
+                        type="text" 
+                        name="officeFloor" 
+                        value={profileData.officeFloor || ''} 
+                        onChange={handleProfileChange} 
+                      />
+                    </label>
+                    <label>
+                      プロフィール画像URL:
+                      <InputForm 
+                        type="text" 
+                        name="profileImage" 
+                        value={profileData.profileImage || ''} 
+                        onChange={handleProfileChange} 
+                      />
+                    </label>
+                    <PostButton type="submit">変更を保存</PostButton>
+                  </form>
+                )}
+
+                {saveMessage && <p>保存完了です!</p>}
+                
+              </ProfileInfo>
+            </ProfileContainer>
+          </Popup>
+        )}
+
+
         <MapArea>
           <MapCanvas
             ref={canvasRef}
@@ -464,7 +685,7 @@ const HomePage = () => {
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}  // マウスがキャンバスから離れた時にドラッグを解除
+            onMouseLeave={handleMouseUp}
             onWheel={handleWheel}
           ></MapCanvas>
         </MapArea>
@@ -474,6 +695,7 @@ const HomePage = () => {
 };
 
 export default HomePage;
+
 
 const Container = styled.div`
   display: flex;
@@ -522,16 +744,19 @@ const MainContent = styled.div`
 
 const Popup = styled.div`
   position: absolute;
-  top: 50%;
-  left: 1%;
-  transform: translateY(-50%);
+  top: 10%; /* ここを変更して画面内に確実に表示されるようにする */
+  left: 10%;
   background-color: #FFFFFF;
   padding: 30px;
   box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
   border-radius: 8px;
   width: 400px;
-  z-index: 1000;
+  height: auto;
+  max-height: 80vh;
+  overflow-y: auto;
+  z-index: 1000; /* z-indexを追加して他の要素に隠れないようにする */
 `;
+
 
 const PopupTitle = styled.h1`
   font-size: 24px;
@@ -622,10 +847,9 @@ const MapArea = styled.div`
 `;
 
 const MapCanvas = styled.canvas`
-  width: 5000px;
-  height: 5000px;
+  width: 100%;
+  height: 100%;
   background-color: #2FA6FF;
-  border: 2px solid red;  // デバッグのために赤い枠を追加
 `;
 
 const SearchButton = styled.button`
@@ -639,19 +863,55 @@ const SearchButton = styled.button`
   margin-left: 10px;
 `;
 
-const MiniMapWrapper = styled.div`
-  position: fixed;  // 固定位置に変更
-  top: 10px;  // 画面の上から10px
-  right: 100px;  // 画面の右から100px
-  width: 150px;
-  height: 150px;
-  border: 1px solid #ccc;
-  background-color: rgba(255, 255, 255, 0.8);
-  z-index: 1000;
+const ProfileContainer = styled.div`
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 `;
 
-const MiniMapCanvas = styled.canvas`
+const ProfileImage = styled.img`
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  object-fit: cover;
+  margin-bottom: 20px;
+`;
+
+const ProfileInfo = styled.div`
   width: 100%;
-  height: 100%;
-  border: 2px solid blue;  // デバッグのために青い枠を追加
+  text-align: center;
+
+  h2 {
+    font-size: 24px;
+    font-weight: bold;
+    margin-bottom: 20px;
+  }
+
+  p, label {
+    font-size: 16px;
+    margin: 10px 0;
+    color: #333;
+  }
+`;
+
+const UploadButton = styled.button`
+  margin-top: 10px;
+  padding: 8px 16px;
+  font-size: 14px;
+  color: #ffffff;
+  background-color: #2fa6ff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+
+  &:hover {
+    background-color: #1d8fd8;
+  }
+`;
+
+const ProfileImageWrapper = styled.div`
+  display: flex;
+  flex-direction: column;
+  align-items: center; /* 中央揃え */
+  margin-bottom: 20px; /* 下にスペースを追加 */
 `;

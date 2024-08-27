@@ -1,2 +1,14 @@
 aiofiles==24.1.0
 certifi==2024.7.4
+numpy
+bcrypt
+umap-learn
+pinecone-client
+fastapi
+uvicorn
+sqlalchemy
+python-jose
+passlib
+sentence-transformers
+scikit-learn
+python-dotenv
