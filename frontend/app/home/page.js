@@ -27,7 +27,6 @@ const HomePage = () => {
   const [isEditing, setIsEditing] = useState(false);  // 編集モードの状態
   const [saveMessage, setSaveMessage] = useState('');  // 保存メッセージの状態
   const fileInputRef = useRef(null);
-  
 
   const fetchProfileData = async () => {
     try {
@@ -84,19 +83,37 @@ const HomePage = () => {
     };
 
 
-  const handleProfileSubmit = async (e) => {
-    e.preventDefault();
-    try {
-      const response = await axios.put('http://localhost:8000/home', profileData, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-      });
-      setSaveMessage('プロフィールが変更されました');
-      setIsEditing(false);
-    } catch (error) {
-      console.error('プロフィールの更新に失敗しました:', error);
-    }
+    // この部分を修正します（現在のhandleProfileSubmit関数を置き換えます）
+    const handleProfileSubmit = async (e) => {
+      e.preventDefault();
+  
+      const updatedProfileData = {
+          nickname: profileData.nickname, // 'nickname' カラムに対応
+          jobTitle: profileData.jobTitle, // 'job_title' カラムに対応
+          jobDescription: profileData.jobDescription, // 'job_description' カラムに対応
+          interests: profileData.interests, // 'interests' カラムに対応
+          skills: profileData.skills, // 'skills' カラムに対応
+          values: profileData.values, // 'values' カラムに対応
+          officeFloor: profileData.officeFloor, // 'office_floor' カラムに対応
+          profileImage: profileData.profileImage, // 'profile_image' カラムに対応 (適切な形式で送信)
+          frequentFloor: profileData.frequentFloor, // 'frequent_floor' カラムに対応
+          bio: profileData.bio, // 'bio' カラムに対応
+      };
+  
+      try {
+          const response = await axios.put('http://localhost:8000/profile', updatedProfileData, {
+              headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+          });
+          setSaveMessage('プロフィールが変更されました');
+          setIsEditing(false);
+      } catch (error) {
+          console.error('プロフィールの更新に失敗しました:', error.response.data);
+      }
   };
   
+  
+    
+
 
   // Initial setup: Canvas offset and viewport setup
   useEffect(() => {
@@ -328,12 +345,13 @@ const handleImageUpload = (event) => {
     reader.onloadend = () => {
       setProfileData((prevData) => ({
         ...prevData,
-        profileImage: reader.result,  // Base64エンコードされた画像データを保存
+        profileImage: reader.result.split(",")[1],  // Base64部分のみを保存
       }));
     };
     reader.readAsDataURL(file);
   }
 };
+
 
 
   

@@ -1,10 +1,8 @@
 from sqlalchemy import Column, Integer, String, ForeignKey, LargeBinary, Float, Text
 from sqlalchemy.orm import relationship
 from .database import Base
-from sqlalchemy import Double
 from pydantic import BaseModel
 from typing import Optional
-
 
 # Userモデル: ユーザー情報を保存するためのテーブル
 class User(Base):
@@ -23,15 +21,14 @@ class UserProfile(Base):
 
     user_id = Column(Integer, ForeignKey('users.id'), primary_key=True)
     job_title = Column(String, nullable=True)
-    job_description = Column(String, nullable=True)
-    interests = Column(String, nullable=True)
-    skills = Column(String, nullable=True)
-    values = Column(String, nullable=True)
+    job_description = Column(Text, nullable=True)
+    interests = Column(Text, nullable=True)
+    skills = Column(Text, nullable=True)
+    values = Column(Text, nullable=True)
     office_floor = Column(String, nullable=True)
     profile_image = Column(String, nullable=True)
     
     user = relationship("User", back_populates="profile")
-
 
 # Postsモデル: 投稿情報を保存するためのテーブル
 class Posts(Base):
@@ -45,12 +42,12 @@ class Posts(Base):
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     embedding = Column(LargeBinary, nullable=True)
-
-    x_coord = Column(Double, nullable=True)
-    y_coord = Column(Double, nullable=True)
+    x_coord = Column(Float, nullable=True)
+    y_coord = Column(Float, nullable=True)
 
     user = relationship("User", back_populates="posts")
 
+# Pydanticモデル
 class ProfileResponse(BaseModel):
     username: str
     jobTitle: Optional[str] = None
@@ -59,6 +56,7 @@ class ProfileResponse(BaseModel):
     skills: Optional[str] = None
     values: Optional[str] = None
     officeFloor: Optional[str] = None
-    profileImage: Optional[str] = None  # プロフィール画像のURLなど
+    profileImage: Optional[str] = None
+    
     class Config:
         from_attributes = True

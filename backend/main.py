@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import Column, Integer, String, Text
 from datetime import datetime, timedelta
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -46,7 +46,6 @@ if not api_key:
 print("Pinecone APIキー:", api_key)
 # 修正ポイント：Pineconeのインスタンスを作成
 pc = pinecone.Pinecone(api_key=api_key)
-
 index_name = "my-index"
 
 # 既存のインデックスを削除（もし存在する場合）
@@ -253,17 +252,23 @@ def get_profile(current_user: User = Depends(get_current_user), db: Session = De
     profile = db.query(UserProfile).filter(UserProfile.user_id == current_user.id).first()
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
+    
+    # フィールド名をデータベースのカラム名に合わせる
     profile_data = {
         "username": current_user.username,
         "jobTitle": profile.job_title,
-        "jobDescription": profile.work_description,
+        "jobDescription": profile.job_description,
         "interests": profile.interests,
         "skills": profile.skills,
         "values": profile.values,
-        "officeFloor": profile.frequent_floor,
-        "profileImage": profile.profile_picture
+        "officeFloor": profile.office_floor,
+        "frequentFloor": profile.frequent_floor,
+        "bio": profile.bio,
+        "profileImage": profile.profile_image  # 画像データの処理を考慮
     }
+    
     return profile_data
+
 
 @app.put("/profile", response_model=ProfileResponse)
 def update_profile(profile_data: ProfileResponse, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -271,12 +276,16 @@ def update_profile(profile_data: ProfileResponse, db: Session = Depends(get_db),
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
     
+    # フィールド名をデータベースのカラム名に合わせて更新
+    profile.nickname = profile_data.nickname
     profile.job_title = profile_data.jobTitle
     profile.job_description = profile_data.jobDescription
     profile.interests = profile_data.interests
     profile.skills = profile_data.skills
     profile.values = profile_data.values
     profile.office_floor = profile_data.officeFloor
+    profile.frequent_floor = profile_data.frequentFloor
+    profile.bio = profile_data.bio
     profile.profile_image = profile_data.profileImage
     
     db.commit()
@@ -290,6 +299,8 @@ def update_profile(profile_data: ProfileResponse, db: Session = Depends(get_db),
         skills=profile.skills,
         values=profile.values,
         officeFloor=profile.office_floor,
+        frequentFloor=profile.frequent_floor,
+        bio=profile.bio,
         profileImage=profile.profile_image
     )
 
@@ -396,3 +407,33 @@ def startup_event():
         print("Database connected successfully.")
     except Exception as e:
         print("Database connection failed:", e)
+        
+@app.put("/profile", response_model=ProfileResponse)
+def update_profile(profile_data: ProfileResponse, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    profile = db.query(UserProfile).filter(UserProfile.user_id == current_user.id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    
+    # プロフィール情報を更新
+    profile.job_title = profile_data.jobTitle
+    profile.job_description = profile_data.jobDescription
+    profile.interests = profile_data.interests
+    profile.skills = profile_data.skills
+    profile.values = profile_data.values
+    profile.office_floor = profile_data.officeFloor
+    profile.profile_image = profile_data.profileImage
+    
+    # データベースにコミットして保存
+    db.commit()
+    db.refresh(profile)
+    
+    return ProfileResponse(
+        username=current_user.username,
+        jobTitle=profile.job_title,
+        jobDescription=profile.job_description,
+        interests=profile.interests,
+        skills=profile.skills,
+        values=profile.values,
+        officeFloor=profile.office_floor,
+        profileImage=profile.profile_image
+    )
