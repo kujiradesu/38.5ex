@@ -27,6 +27,8 @@ const HomePage = () => {
   const [isEditing, setIsEditing] = useState(false);  // 編集モードの状態
   const [saveMessage, setSaveMessage] = useState('');  // 保存メッセージの状態
   const fileInputRef = useRef(null);
+  const [showPlotPopup, setShowPlotPopup] = useState(false); // プロットクリック時のポップアップ
+  const [selectedPoint, setSelectedPoint] = useState(null); // クリックされたプロットの情報
 
   const fetchProfileData = async () => {
     try {
@@ -133,7 +135,7 @@ const HomePage = () => {
         plotMapData(mapData);
       }
     }
-  }, [mapData]);
+  }, []);
 
   // Handle zoom in/out
   const handleWheel = (event) => {
@@ -192,7 +194,7 @@ const HomePage = () => {
     window.addEventListener("resize", resizeCanvas);
     resizeCanvas();
     return () => window.removeEventListener("resize", resizeCanvas);
-  }, [mapData]);
+  }, []);
 
   // Fetch map data
   useEffect(() => {
@@ -201,6 +203,32 @@ const HomePage = () => {
       setToken(savedToken);
       fetchMapData(savedToken);
       fetchProfileData();  // プロフィールデータも一緒に取得
+
+      const resizeCanvas = () => {
+        const canvas = canvasRef.current;
+        if (canvas) {
+          canvas.width = window.innerWidth;
+          canvas.height = window.innerHeight;
+  
+          if (mapData.length > 0) {
+            plotMapData(mapData);  // キャンバスを再描画
+          }
+        }
+      };
+  
+      // リサイズ時のデバウンス処理
+      const handleResize = debounce(() => {
+        resizeCanvas();  // リサイズ時にキャンバスを再設定
+      }, 200);
+  
+      // イベントリスナーの設定
+      window.addEventListener("resize", handleResize);
+      resizeCanvas();  // 初期ロード時にキャンバスを設定
+  
+      // クリーンアップ関数
+      return () => {
+        window.removeEventListener("resize", handleResize);
+      };
     } else {
       alert("認証トークンが存在しません。ログインしてください。");
       window.location.href = "/login";
@@ -275,6 +303,7 @@ const HomePage = () => {
   // Plot map data
   const plotMapData = (data) => {
     const canvas = canvasRef.current;
+    const rectSize = 50; // 例えば50ピクセルの正方形サイズ
   
     if (canvas) {
       const ctx = canvas.getContext("2d");
@@ -300,19 +329,28 @@ const HomePage = () => {
         const canvasX = point.x * scale + offsetX;
         const canvasY = point.y * scale + offsetY;
   
-        // 四角の背景の描画
-        const rectSize = 50;
         ctx.fillStyle = "#67D4BA";
         ctx.fillRect(canvasX - rectSize / 2, canvasY - rectSize / 2, rectSize, rectSize);
-  
-        // 丸の描画
+
         ctx.beginPath();
         ctx.arc(canvasX, canvasY, 10, 0, 2 * Math.PI);
         ctx.fillStyle = getStatusColor(point.status);
         ctx.fill();
+  
+        // プロットにクリックイベントを追加
+        canvas.addEventListener("click", (event) => {
+          const clickX = event.clientX;
+          const clickY = event.clientY;
+  
+          if (Math.abs(clickX - canvasX) < rectSize / 2 && Math.abs(clickY - canvasY) < rectSize / 2) {
+            setSelectedPoint(point);  // クリックされたプロットの情報をセット
+            setShowPlotPopup(true);  // ポップアップを表示
+          }
+        });
       });
     }
   };
+
   
   const getStatusColor = (status) => {
     switch (status) {
@@ -352,9 +390,24 @@ const handleImageUpload = (event) => {
   }
 };
 
+const debounce = (func, delay) => {
+  let debounceTimer;
+  return function(...args) {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => func.apply(this, args), delay);
+  };
+};
 
+useEffect(() => {
+  const handleResize = debounce(() => {
+      // ここでリサイズ時の再描画処理を行う
+      resizeCanvas();
+  }, 200);
 
-  
+  window.addEventListener("resize", handleResize);
+  return () => window.removeEventListener("resize", handleResize);
+}, []);
+
 
   return (
     <Container>
@@ -707,6 +760,23 @@ const handleImageUpload = (event) => {
             onWheel={handleWheel}
           ></MapCanvas>
         </MapArea>
+        {showPlotPopup && selectedPoint && (
+          <Popup>
+            <h2>{selectedPoint.title}</h2>
+            <p>{selectedPoint.description}</p>
+            <PostButton onClick={() => setShowPopup(false)}>閉じる</PostButton>
+          </Popup>
+        )}
+
+        {showPopup && selected === "post" && (
+          <Popup>
+                <PopupTitle>投稿を作成する</PopupTitle>
+                {/* 投稿フォームの内容 */}
+                <SearchFieldWrapper>
+                    {/* フォームフィールドなど */}
+                </SearchFieldWrapper>
+            </Popup>
+        )}
       </MainContent>
     </Container>
   );
@@ -772,6 +842,7 @@ const Popup = styled.div`
   height: auto;
   max-height: 80vh;
   overflow-y: auto;
+  transition: opacity 0.2s ease-in-out;  // 速いアニメーション
   z-index: 1000; /* z-indexを追加して他の要素に隠れないようにする */
 `;
 
