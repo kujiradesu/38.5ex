@@ -29,6 +29,8 @@ const HomePage = () => {
   const fileInputRef = useRef(null);
   const [showPlotPopup, setShowPlotPopup] = useState(false); // プロットクリック時のポップアップ
   const [selectedPoint, setSelectedPoint] = useState(null); // クリックされたプロットの情報
+  const [activityType, setActivityType] = useState("");
+  const [query, setQuery] = useState("");
 
   const fetchProfileData = async () => {
     try {
@@ -377,6 +379,31 @@ useEffect(() => {
     }
   };
 
+  const handleSearch = async () => {
+    console.log("検索ボタンがクリックされました");
+    // 以下の処理を追加
+    const response = await fetch("http://127.0.0.1:8000/search/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        activity_type: activityType,
+        status: status,
+        comment: comment,
+        query: query,
+      }),
+    });
+  
+    if (response.ok) {
+      const results = await response.json();
+      console.log("検索結果:", results);
+      // 結果をプロットに反映させる処理をここに追加
+    } else {
+      console.error("検索に失敗しました");
+    }
+  };
+
   const handleIconClick = (icon) => {
     console.log(`Icon clicked: ${icon}, current selected: ${selected}`);
     if (selected === icon) {
@@ -461,6 +488,7 @@ useEffect(() => {
           console.log("Displaying Home popup"),
           <Popup>
             <SearchFieldWrapper>
+              <Button onClick={handleSearch}>検索</Button>
               <Section>
                 <h2>業務/業務外</h2>
                 <Description>業務または業務外を選択してください。</Description>

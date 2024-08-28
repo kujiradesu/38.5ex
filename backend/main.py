@@ -18,6 +18,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 from sqlalchemy import Column, Integer, String, Text
+from sqlalchemy import or_, and_
 from datetime import datetime, timedelta
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -202,6 +203,27 @@ class PostCreate(BaseModel):
     description: str
 
 # Endpoints
+def filter_posts(activity_type: Optional[str], status: Optional[str], comment: Optional[str], query: Optional[str], db: Session):
+    query_obj = db.query(Posts)
+    
+    # 条件に応じたフィルタリング
+    if activity_type:
+        query_obj = query_obj.filter(Posts.activity_type == activity_type)
+    if status:
+        query_obj = query_obj.filter(Posts.status == status)
+    if comment:
+        query_obj = query_obj.filter(Posts.comment == comment)
+    
+    # フリーテキスト検索の場合
+    if query:
+        query_embedding = model.encode(query).tolist()
+        search_result = index.query(queries=[query_embedding], top_k=5)
+        post_ids = [int(match['id'].split("#")[1]) for match in search_result['matches']]
+        query_obj = query_obj.filter(Posts.id.in_(post_ids))
+    
+    return query_obj.all()
+
+
 @app.post("/users/")
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
     hashed_password = get_password_hash(user.password)
@@ -369,14 +391,10 @@ def create_post(post: PostCreate, db: Session = Depends(get_db), current_user: U
     return response_data
 
 @app.post("/search/")
-def search_posts(query: str, db: Session = Depends(get_db)):
-    query_embedding = model.encode(query).tolist()
-    search_result = index.query(queries=[query_embedding], top_k=5)
-    
-    post_ids = [int(match['id'].split("#")[1]) for match in search_result['matches']]
-    similar_posts = db.query(Posts).filter(Posts.id.in_(post_ids)).all()
-    
-    return similar_posts
+def search_posts(activity_type: Optional[str] = None, status: Optional[str] = None, comment: Optional[str] = None, query: Optional[str] = None, db: Session = Depends(get_db)):
+    results = filter_posts(activity_type, status, comment, query, db)
+    return results
+
 
 @app.get("/home/")
 def get_map_data(db: Session = Depends(get_db)):
