@@ -186,15 +186,25 @@ const HomePage = () => {
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
         if (mapData.length > 0) {
-          plotMapData(mapData);
+          plotMapData(mapData);  // キャンバスをリサイズした後に再描画
         }
       }
     };
     
-    window.addEventListener("resize", resizeCanvas);
-    resizeCanvas();
-    return () => window.removeEventListener("resize", resizeCanvas);
-  }, []);
+    // デバウンス付きでリサイズイベントをハンドリング
+    const handleResize = debounce(() => {
+        resizeCanvas();
+    }, 200);
+
+    window.addEventListener("resize", handleResize);
+    resizeCanvas();  // 初期ロード時にキャンバスを設定
+
+    // クリーンアップ関数
+    return () => {
+        window.removeEventListener("resize", handleResize);
+    };
+}, [mapData]);
+
 
   // Fetch map data
 useEffect(() => {
@@ -323,8 +333,8 @@ useEffect(() => {
       const scaleY = (canvas.height - 2 * padding) / (yMax - yMin);
       const scale = Math.min(scaleX, scaleY);
   
-      const offsetX = padding - xMin * scale;
-      const offsetY = padding - yMin * scale;
+      const offsetX = (canvas.width - (xMax - xMin) * scale) / 2;
+      const offsetY = (canvas.height - (yMax - yMin) * scale) / 2;
   
       // データポイントの描画
       data.forEach((point) => {
