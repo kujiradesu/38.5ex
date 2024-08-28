@@ -197,43 +197,45 @@ const HomePage = () => {
   }, []);
 
   // Fetch map data
-  useEffect(() => {
-    const savedToken = localStorage.getItem("token");
-    if (savedToken) {
-      setToken(savedToken);
-      fetchMapData(savedToken);
-      fetchProfileData();  // プロフィールデータも一緒に取得
+useEffect(() => {
+  const savedToken = localStorage.getItem("token");
+  if (savedToken) {
+    setToken(savedToken);
+    fetchMapData(savedToken);
+    fetchProfileData();  // プロフィールデータも一緒に取得
 
-      const resizeCanvas = () => {
-        const canvas = canvasRef.current;
-        if (canvas) {
-          canvas.width = window.innerWidth;
-          canvas.height = window.innerHeight;
-  
-          if (mapData.length > 0) {
-            plotMapData(mapData);  // キャンバスを再描画
-          }
+    // resizeCanvas関数を定義
+    const resizeCanvas = () => {
+      const canvas = canvasRef.current;
+      if (canvas) {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        if (mapData.length > 0) {
+          plotMapData(mapData);  // キャンバスを再描画
         }
-      };
-  
-      // リサイズ時のデバウンス処理
-      const handleResize = debounce(() => {
-        resizeCanvas();  // リサイズ時にキャンバスを再設定
-      }, 200);
-  
-      // イベントリスナーの設定
-      window.addEventListener("resize", handleResize);
-      resizeCanvas();  // 初期ロード時にキャンバスを設定
-  
-      // クリーンアップ関数
-      return () => {
-        window.removeEventListener("resize", handleResize);
-      };
-    } else {
-      alert("認証トークンが存在しません。ログインしてください。");
-      window.location.href = "/login";
-    }
-  }, []);
+      }
+    };
+
+    // リサイズ時のデバウンス処理
+    const handleResize = debounce(() => {
+      resizeCanvas();  // リサイズ時にキャンバスを再設定
+    }, 200);
+
+    // イベントリスナーの設定
+    window.addEventListener("resize", handleResize);
+    resizeCanvas();  // 初期ロード時にキャンバスを設定
+
+    // クリーンアップ関数
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  } else {
+    alert("認証トークンが存在しません。ログインしてください。");
+    window.location.href = "/login";
+  }
+}, []);
+
 
   const fetchMapData = async (token) => {
     try {
@@ -761,13 +763,14 @@ useEffect(() => {
           ></MapCanvas>
         </MapArea>
         {showPlotPopup && selectedPoint && (
-          <Popup>
-            <h2>{selectedPoint.title}</h2>
-            <p>{selectedPoint.description}</p>
-            <PostButton onClick={() => setShowPopup(false)}>閉じる</PostButton>
-          </Popup>
+          <PopupOverlay onClick={() => setShowPlotPopup(false)}> {/* 外側のクリックで閉じる */}
+            <PopupContent onClick={(e) => e.stopPropagation()}> {/* クリックの伝播を防ぐ */}
+              <h2>{selectedPoint.title}</h2>
+              <p>{selectedPoint.description}</p>
+              <PostButton onClick={() => setShowPlotPopup(false)}>閉じる</PostButton>
+            </PopupContent>
+          </PopupOverlay>
         )}
-
         {showPopup && selected === "post" && (
           <Popup>
                 <PopupTitle>投稿を作成する</PopupTitle>
@@ -1003,4 +1006,26 @@ const ProfileImageWrapper = styled.div`
   flex-direction: column;
   align-items: center; /* 中央揃え */
   margin-bottom: 20px; /* 下にスペースを追加 */
+`;
+
+const PopupOverlay = styled.div`
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 999;
+`;
+
+const PopupContent = styled.div`
+  background: #FFFFFF;
+  padding: 30px;
+  box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  z-index: 1000; /* ポップアップ内容が親要素より上に表示されるようにする */
+  position: relative;
 `;
